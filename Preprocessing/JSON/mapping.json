@@ -1,0 +1,36 @@
+{
+    "Cattle": {
+        "Bovin 1 (male)": 0,
+        "Bovin 2 (femelle)": 1,
+        "Bovin 3 (femelle)": 2,
+        "Bovin 4 (femelle)": 3,
+        "Bovin 5 (femelle)": 4,
+        "Bovin 6 (femelle)": 5,
+        "Bovin 7 (male)": 6
+    },
+    "Include": {
+        "Grazing": 0,
+        "Rester debout": 1,
+        "Marcher": 2,
+        "Marcher doucement": 2,
+        "Marcher rapidement": 2,
+        "Courir": 2,
+        "Rester assis": 3,
+        
+        "Se lecher (le ventre)": 8,
+        "Se lecher (entre les jambes)" : 8
+    },
+    "Exclude": {
+        "S'assoir": 4,
+        "Se lever": 5,
+        "Chevauchements": 6,
+        "Se gratter (la tete a un arbre)": 7,
+        "Se gratter (le coup a un arbre)": 7,
+
+        "Se gratter (le ventre avec les cornes)": 9,
+        "Se gratter (le coup avec le pied)": 9,
+        "Se lecher (le pied)": 10,
+        "Monter sur un obstacle": 11,
+        "Charger": 12
+    }
+}
