@@ -15,6 +15,7 @@ import matplotlib.pyplot as plt
 # Args
 parser = argparse.ArgumentParser()
 parser.add_argument('-all', action='store_true', help='Full processing')
+parser.add_argument('-plot', action='store_true', help='Plot sequences')
 args = parser.parse_args()
 
 # Read
@@ -37,6 +38,10 @@ SEQUENCE_FOLDER_PATH = 'Results/Sequenced'
 # Modes
 INTERVAL_PROCESSING_MODE = None # NONE, SEQUENCE
 MULTI_OUTPUT_MODE = None # DIRECT, GROUPEDV1, GROUPEDV2
+FILTER_MODE = None # OFF, ON
+
+# Stats
+filtered_row_count = 0
 
 STARTING_TIMES = [
     datetime.strptime("2025-02-14 16:34:02.752 UTC+01:00", "%Y-%m-%d %H:%M:%S.%f %Z%z"),
@@ -160,9 +165,20 @@ def plot_actions():
         plot_action(merged_df, file_name, root)
         print(f"Plotted {len(csv_files)} files in {root}")
 
-def filter_df(df, columns_to_filter):
-    """Filters out NULL and 0 values"""
-    return  df[~(df[columns_to_filter].eq(0) | df[columns_to_filter].isna()).any(axis=1)]
+def filter_df(df):
+    """Filters out Noise"""
+    filtered_df = df.copy()
+
+    for col in ['XA', 'YA', 'ZA', 'XG', 'YG', 'ZG']:
+        # Remove missing data
+        filtered_df_col = filtered_df[col].replace(0, np.nan)
+        global filtered_row_count
+        filtered_row_count += filtered_df_col.isna().sum()
+        filtered_df_col.interpolate(method='linear', inplace=True)
+        filtered_df_col.ffill().bfill(inplace=True)
+
+        filtered_df[col] = filtered_df_col
+    return filtered_df
 
 def align_and_format_df(a_df, g_df, starting_time):
     """Aligns gyroscope data with the accelerometer data and formats the resulting dataframe"""
@@ -171,7 +187,7 @@ def align_and_format_df(a_df, g_df, starting_time):
     # Convert gyroscope timestamps to a NumPy array for faster computation
     gyro_times = g_df['Time (s)'].values
     aligned_rows = []
-    for _, accel_row in a_df.iterrows():        
+    for _, accel_row in a_df.iterrows():      
         # Align
         time_differences = np.abs(gyro_times - accel_row['Time (s)'])
         closest_gyro_index = np.argmin(time_differences)
@@ -189,12 +205,18 @@ def align_and_format_df(a_df, g_df, starting_time):
         }
         aligned_rows.append(aligned_row)
 
-    return pd.DataFrame(aligned_rows)
+    aligned_df = pd.DataFrame(aligned_rows)
+    if (FILTER_MODE == 'OFF'):
+        return aligned_df
+    else:
+        return filter_df(aligned_df)
 
-def min_max_normalize_df(df, columns_to_normalize):
+def min_max_normalize_df(df, columns_to_exclude):
     """Normalize values to [0, 1] range"""
     normalized_df = df.copy()
-    
+
+    columns_to_normalize = [col for col in df.columns if col not in columns_to_exclude]
+
     for column in columns_to_normalize:
         min_val = normalized_df[column].min()
         max_val = normalized_df[column].max()
@@ -238,6 +260,18 @@ def sequence_df(df):
 
     return sequenced_df
 
+def print_action_stats():
+    df = pd.read_csv(os.path.join(CLASSIFY_OUTPUT_FOLDER_PATH, 'Merged_normalized_classified.csv'))
+    print('Stats:')
+    print(f'Filtered rows count: {filtered_row_count}')
+    action_id_col_sorted = df['action_id'].value_counts().sort_index()
+    
+    total_row_count = 0
+    for value, count in action_id_col_sorted.items():
+        print(f"{value} count: {count}, ~( {str(timedelta(seconds=count/10)).split('.')[0]} )")
+        total_row_count += count
+    print(f"Total row count: {total_row_count}, ~( {str(timedelta(seconds=total_row_count / 10)).split('.')[0]} )")
+
 # Main
 def process_csv(a_folder_path, g_folder_path, a_result_folder_path, g_result_folder_path, in_type, out_type, function_name):
     file_dict = {'a': {}, 'g': {}}
@@ -265,7 +299,7 @@ def process_csv(a_folder_path, g_folder_path, a_result_folder_path, g_result_fol
             # Process
             result_df = {}
             if (function_name == 'align'): result_df = align_and_format_df(a_df, g_df, STARTING_TIMES[i])
-            elif (function_name == 'normalize'): result_df = min_max_normalize_df(a_df, ['XA', 'YA', 'ZA', 'XG', 'YG', 'ZG'])
+            elif (function_name == 'normalize'): result_df = min_max_normalize_df(a_df, ['DateTime'])
             elif (function_name == 'classify'): result_df = classify_df(a_df)
             elif (function_name == 'sequence'): result_df = sequence_df(a_df)
             buffer.append(result_df)
@@ -338,13 +372,30 @@ if (args.all):
         'align': True,
         'merge': True,
         'normalize': True,
-        'classify': False,
+        'classify': True,
         'sequence': True,
-        'plot_actions': True
+        'plot_actions': False,
+        'show_stats': True
     }
     INTERVAL_PROCESSING_MODE = 'SEQUENCE'
     MULTI_OUTPUT_MODE = 'DIRECT'
+    FILTER_MODE = 'ON'
+if (args.plot):
+    PARAMS = {
+        'align': True,
+        'merge': True,
+        'normalize': True,
+        'classify': False,
+        'sequence': True,
+        'plot_actions': True,
+        'show_stats': False
+    }
+    INTERVAL_PROCESSING_MODE = 'SEQUENCE'
+    MULTI_OUTPUT_MODE = 'GROUPEDV2'
+    FILTER_MODE = 'ON'
 
+if (FILTER_MODE == None):
+    FILTER_MODE = Prompt.ask('Choose filter mode:', choices=['ON', 'OFF'], case_sensitive=False, default='ON', show_default=True)
 if (not 'align' in PARAMS):
     if (Prompt.ask('Align ?', choices=['y', 'N'], case_sensitive=False, default='N', show_default=False) == 'y'):
         PARAMS['align'] = True
@@ -371,7 +422,7 @@ if (not 'sequence' in PARAMS):
     else:
         PARAMS['sequence'] = False
 if (INTERVAL_PROCESSING_MODE == None and (PARAMS['classify'] or PARAMS['sequence'])):
-    INTERVAL_PROCESSING_MODE = Prompt.ask('Choose interval processing mode:', choices=['NONE', 'SEQUENCE'], case_sensitive=False, default='NONE', show_default=True)
+    INTERVAL_PROCESSING_MODE = Prompt.ask('Choose interval processing mode:', choices=['NONE', 'SEQUENCE'], case_sensitive=False, default='SEQUENCE', show_default=True)
 if (MULTI_OUTPUT_MODE == None and (PARAMS['classify'] or PARAMS['sequence'])):
     MULTI_OUTPUT_MODE = Prompt.ask('Choose multi output mode:', choices=['DIRECT', 'GROUPEDV1', 'GROUPEDV2'], case_sensitive=False, default='DIRECT', show_default=True)
 
@@ -381,6 +432,11 @@ if (not 'plot_actions' in PARAMS):
     else:
         PARAMS['plot_actions'] = False
 
+if (not 'show_stats' in PARAMS):
+    if (Prompt.ask('Show stats ?', choices=['y', 'N'], case_sensitive=False, default='N', show_default=False) == 'y'):
+        PARAMS['show_stats'] = True
+    else:
+        PARAMS['show_stats'] = False
 
 
 if (PARAMS['align']):
@@ -401,5 +457,8 @@ if (PARAMS['sequence']):
 
 if (PARAMS['plot_actions']):
     plot_actions()
+
+if (PARAMS['show_stats']):
+    print_action_stats()
 
 print('End !')
