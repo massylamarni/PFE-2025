@@ -92,77 +92,110 @@ PARAMS = {
 
 if (args.all):
     PARAMS = {
-        "align": {
+    "align": {
+        "enable": 1,
+        "settings": {
+            "mode": "FILTER",
+            "modes": ['FILTER', 'NOFILTER'],
+            "merge": True
+        },
+    },
+    "normalize": {
+        "enable": 1,
+        "settings": {
+            "merge": True
+        },
+    },
+    "classify": {
+        "enable": 1,
+        "settings": {
+            "mode": "NONE",
+            "modes": ['NONE', 'SEQUENCE'],
+            "merge": True
+        },
+        "get_dump": {
             "enable": 1,
             "settings": {
-                "mode": "FILTER",
-                "modes": ['FILTER', 'NOFILTER']
+                "mode": "DIRECT",
+                "modes": ['DIRECT'],
+                "merge": False
             },
-            "merge": {
-                "enable": 1,
-            },
-            "normalize": {
-                "enable": 1
-            },
-            "classify": {
-                "enable": 1,
-                "settings": {
-                    "mode": "NONE",
-                    "modes": ['NONE', 'SEQUENCE']
-                },
-                "get_dump": {
-                    "enable": 1
-                }
-            },
-            "sequence": {
-                "enable": 1,
-                "settings": {
-                    "mode": "DIRECT",
-                    "modes": ['DIRECT', 'PLOT1', 'PLOT2']
-                },
-                "augment": {
-                    "enable": 1
-                }
-            }
         }
+    },
+    "sequence": {
+        "enable": 1,
+        "settings": {
+            "mode": "DIRECT",
+            "modes": ['DIRECT', 'PLOT1', 'PLOT2'],
+            "merge": False
+        },
+        "plot": {
+            "enable": 0,
+        },
+        "augment": {
+            "enable": 1,
+            "settings": {
+                "merge": True
+            },
+        }
+    },
+    "print_stats": {
+        "enable": 1
     }
+}
 elif (args.plot):
     PARAMS = {
-        "align": {
+    "align": {
+        "enable": 1,
+        "settings": {
+            "mode": "FILTER",
+            "modes": ['FILTER', 'NOFILTER'],
+            "merge": True
+        },
+    },
+    "normalize": {
+        "enable": 1,
+        "settings": {
+            "merge": True
+        },
+    },
+    "classify": {
+        "enable": 0,
+        "settings": {
+            "mode": "NONE",
+            "modes": ['NONE', 'SEQUENCE'],
+            "merge": True
+        },
+        "get_dump": {
+            "enable": None,
+            "settings": {
+                "mode": "DIRECT",
+                "modes": ['DIRECT'],
+                "merge": False
+            },
+        }
+    },
+    "sequence": {
+        "enable": 1,
+        "settings": {
+            "mode": "PLOT2",
+            "modes": ['DIRECT', 'PLOT1', 'PLOT2'],
+            "merge": False
+        },
+        "plot": {
+            "enable": 1,
+        },
+        "augment": {
             "enable": 1,
             "settings": {
-                "mode": "FILTER",
-                "modes": ['FILTER', 'NOFILTER']
+                "merge": True
             },
-            "merge": {
-                "enable": 1,
-            },
-            "normalize": {
-                "enable": 1
-            },
-            "classify": {
-                "enable": 0,
-                "settings": {
-                    "mode": "NONE",
-                    "modes": ['NONE', 'SEQUENCE']
-                },
-                "get_dump": {
-                    "enable": None
-                }
-            },
-            "sequence": {
-                "enable": 1,
-                "settings": {
-                    "mode": "PLOT2",
-                    "modes": ['DIRECT', 'PLOT1', 'PLOT2']
-                },
-                "augment": {
-                    "enable": 1
-                }
-            }
         }
+    },
+    "print_stats": {
+        "enable": 1
     }
-
+}
 
 def load_dfs_from_folder_path(acc_input_folder_path, gyr_input_folder_path):
     df = {}
