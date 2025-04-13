@@ -16,6 +16,7 @@
         "Marcher rapidement": 2,
         "Courir": 2,
         "Rester assis": 3,
+        "Chevauchements": 6,
         "Se gratter (la tete a un arbre)": 7,
         "Se gratter (le coup a un arbre)": 7,
         "Se lecher (le ventre)": 8,
@@ -24,7 +25,6 @@
     "Exclude": {
         "S'assoir": 4,
         "Se lever": 5,
-        "Chevauchements": 6,
         "Se gratter (le ventre avec les cornes)": 9,
         "Se gratter (le coup avec le pied)": 9,
         "Se lecher (le pied)": 10,
