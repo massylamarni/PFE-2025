@@ -14,13 +14,20 @@ import matplotlib.pyplot as plt
 
 from tsaug import TimeWarp, Crop, Quantize, Drift, Reverse, AddNoise
 
+from collections import defaultdict
+
+
 # Notes:
 # * Accelerometer and Gyroscope files recorded at the same time must have the same name.
+#
+# TODO:
+# * The interactive parameter selection method allows unstable combinations, must handle either by
+# hiding conflicting parameters or by satisfying the dependencies
+# * Show comparison graph between original data vs augmented data
 
 # Args
 parser = argparse.ArgumentParser()
 parser.add_argument('-all', action='store_true', help='Full processing')
-parser.add_argument('-plot', action='store_true', help='Plot sequences')
 args = parser.parse_args()
 
 STARTING_TIMES = [
@@ -33,9 +40,14 @@ STARTING_TIMES = [
 ]
 
 stats = {
+    "df_row_count": 0,
     "filtered_row_count": 0,
-    "empty_class_row_count": 0
+    "empty_class_row_count": 0,
+    "original_class_row_count": 0,
+    "augmented_class_row_count": 0
 }
+cached_mapped_actions = {}
+segments_info = {}
 
 PARAMS = {
     "align": {
@@ -62,26 +74,25 @@ PARAMS = {
         "get_dump": {
             "enable": None,
             "settings": {
-                "mode": "DIRECT",
-                "modes": ['DIRECT'],
                 "merge": False
             },
         }
     },
-    "sequence": {
+    "segment": {
         "enable": None,
         "settings": {
-            "mode": "DIRECT",
-            "modes": ['DIRECT', 'PLOT1', 'PLOT2'],
             "merge": False
         },
-        "plot": {
+        "plot_original": {
             "enable": None,
         },
         "augment": {
             "enable": None,
             "settings": {
                 "merge": True
+            },
+            "plot_augmented": {
+                "enable": None,
             },
         }
     },
@@ -92,125 +103,71 @@ PARAMS = {
 
 if (args.all):
     PARAMS = {
-    "align": {
-        "enable": 1,
-        "settings": {
-            "mode": "FILTER",
-            "modes": ['FILTER', 'NOFILTER'],
-            "merge": True
-        },
-    },
-    "normalize": {
-        "enable": 1,
-        "settings": {
-            "merge": True
-        },
-    },
-    "classify": {
-        "enable": 1,
-        "settings": {
-            "mode": "NONE",
-            "modes": ['NONE', 'SEQUENCE'],
-            "merge": True
-        },
-        "get_dump": {
+        "align": {
             "enable": 1,
             "settings": {
-                "mode": "DIRECT",
-                "modes": ['DIRECT'],
-                "merge": False
+                "mode": "FILTER",
+                "modes": ['FILTER'],
+                "merge": True
             },
-        }
-    },
-    "sequence": {
-        "enable": 1,
-        "settings": {
-            "mode": "DIRECT",
-            "modes": ['DIRECT', 'PLOT1', 'PLOT2'],
-            "merge": False
         },
-        "plot": {
-            "enable": 0,
-        },
-        "augment": {
+        "normalize": {
             "enable": 1,
             "settings": {
                 "merge": True
             },
-        }
-    },
-    "print_stats": {
-        "enable": 1
-    }
-}
-elif (args.plot):
-    PARAMS = {
-    "align": {
-        "enable": 1,
-        "settings": {
-            "mode": "FILTER",
-            "modes": ['FILTER', 'NOFILTER'],
-            "merge": True
         },
-    },
-    "normalize": {
-        "enable": 1,
-        "settings": {
-            "merge": True
-        },
-    },
-    "classify": {
-        "enable": 0,
-        "settings": {
-            "mode": "NONE",
-            "modes": ['NONE', 'SEQUENCE'],
-            "merge": True
-        },
-        "get_dump": {
-            "enable": None,
-            "settings": {
-                "mode": "DIRECT",
-                "modes": ['DIRECT'],
-                "merge": False
-            },
-        }
-    },
-    "sequence": {
-        "enable": 1,
-        "settings": {
-            "mode": "PLOT2",
-            "modes": ['DIRECT', 'PLOT1', 'PLOT2'],
-            "merge": False
-        },
-        "plot": {
-            "enable": 1,
-        },
-        "augment": {
+        "classify": {
             "enable": 1,
             "settings": {
+                "mode": "NONE",
+                "modes": ['NONE'],
                 "merge": True
             },
+            "get_dump": {
+                "enable": 1,
+                "settings": {
+                    "merge": False
+                },
+            }
+        },
+        "segment": {
+            "enable": 1,
+            "settings": {
+                "merge": False
+            },
+            "plot_original": {
+                "enable": 1,
+            },
+            "augment": {
+                "enable": 1,
+                "settings": {
+                    "merge": True
+                },
+                "plot_original": {
+                    "enable": 1,
+                },
+            }
+        },
+        "print_stats": {
+            "enable": 1
         }
-    },
-    "print_stats": {
-        "enable": 1
     }
-}
 
-def load_dfs_from_folder_path(acc_input_folder_path, gyr_input_folder_path):
+def load_dfs_from_folder_path(input_folder_path_1, input_folder_path_2):
     df = {}
-    if (gyr_input_folder_path == None):
-        for file_name in os.listdir(acc_input_folder_path):
+    if (input_folder_path_2 == None):
+        for file_name in os.listdir(input_folder_path_1):
             if file_name.lower().endswith('.csv'):
-                df[file_name] = pd.read_csv(os.path.join(acc_input_folder_path, file_name))
+                df[file_name] = pd.read_csv(os.path.join(input_folder_path_1, file_name))
     else:
-        df = { "acc": {}, "gyr": {} }
-        for file_name in os.listdir(acc_input_folder_path):
+        df = { "df1": {}, "df2": {} }
+        for file_name in os.listdir(input_folder_path_1):
             if file_name.lower().endswith('.csv'):
-                df["acc"][file_name] = pd.read_csv(os.path.join(acc_input_folder_path, file_name))
-        for file_name in os.listdir(gyr_input_folder_path):
+                df["df1"][file_name] = pd.read_csv(os.path.join(input_folder_path_1, file_name))
+        for file_name in os.listdir(input_folder_path_2):
             if file_name.lower().endswith('.csv'):
-                df["gyr"][file_name] = pd.read_csv(os.path.join(gyr_input_folder_path, file_name))
+                df["df2"][file_name] = pd.read_csv(os.path.join(input_folder_path_2, file_name))
     
     return df
 
@@ -220,28 +177,11 @@ def save_dfs_to_folder_path(df, output_folder_path, file_name):
     df.to_csv(acc_output_file_path, index=False)
     print(f"Successfuly saved to {acc_output_file_path}")
 
-def write_tree(obj_df, output_folder_path, mode):
-    output_folder_path = os.path.join(output_folder_path, mode)
+def write_tree(obj_df, output_folder_path):
     os.makedirs(output_folder_path, exist_ok=True)
     for key, df in obj_df.items():
         file_name = f"{key}.csv"
-        folder_name = 'Unknown'
-        if (mode == 'DIRECT'):
-            folder_name = ""
-        elif (mode == 'PLOT1'):
-            split_key = key.split('_', 2)
-            folder_name = f"{split_key[0]}_{split_key[1]}"
-            if (split_key[2] == '0'):
-                os.makedirs(os.path.join(output_folder_path, folder_name), exist_ok=True)
-        elif (mode == 'PLOT2'):
-            anchor = '-1'
-            split_key = key.split('_', 2)
-            if (split_key[1] != anchor):
-                anchor = split_key[1]
-                folder_name = split_key[1]
-                os.makedirs(os.path.join(output_folder_path, folder_name), exist_ok=True)
-        
-        output_file_path = os.path.join(os.path.join(output_folder_path, folder_name), file_name)
+        output_file_path = os.path.join(output_folder_path, file_name)
         df.to_csv(output_file_path, index=False)
         print(f"Successfuly saved to {output_file_path}")
 
@@ -267,16 +207,16 @@ def align_and_format_dual_df(dual_df, mode, i):
         return df
 
     starting_time = STARTING_TIMES[i]
-    dual_df['acc']['DateTime'] = dual_df['acc']['Time (s)'].apply(lambda x: starting_time + timedelta(seconds=x))
+    dual_df['df1']['DateTime'] = dual_df['df1']['Time (s)'].apply(lambda x: starting_time + timedelta(seconds=x))
 
     # Convert gyroscope timestamps to a NumPy array for faster computation
-    gyro_times = dual_df['gyr']['Time (s)'].values
+    gyro_times = dual_df['df2']['Time (s)'].values
     aligned_rows = []
-    for _, accel_row in dual_df['acc'].iterrows():      
+    for _, accel_row in dual_df['df1'].iterrows():      
         # Align
         time_differences = np.abs(gyro_times - accel_row['Time (s)'])
         closest_gyro_index = np.argmin(time_differences)
-        closest_gyro_row = dual_df['gyr'].iloc[closest_gyro_index]
+        closest_gyro_row = dual_df['df2'].iloc[closest_gyro_index]
 
         # Format
         aligned_row = {
@@ -364,8 +304,7 @@ def get_mapped_actions(mode): # Needs rework
         for mapped_action in mapped_actions[mapped_cattle]:
             mapped_actions[mapped_cattle][mapped_action].sort(key=lambda x: datetime.strptime(x[0], '%Y-%m-%d %H:%M:%S'))
 
-    with open(MAP_OUTPUT_FILE_PATH, 'w', encoding='utf-8') as f:
-        json.dump(mapped_actions, f, indent=4, ensure_ascii=False)
+    # with open(MAP_OUTPUT_FILE_PATH, 'w', encoding='utf-8') as f: json.dump(mapped_actions, f, indent=4, ensure_ascii=False)
     print(f"Actions mapped to {MAP_OUTPUT_FILE_PATH}")
 
     return mapped_actions
@@ -375,67 +314,77 @@ def classify_df(df, mode):
     df['cattle_id'] = None
     df['action_id'] = None
 
-    mapped_actions = get_mapped_actions(mode)
+    global cached_mapped_actions
+    if (not mode in cached_mapped_actions): cached_mapped_actions[mode] = get_mapped_actions(mode)
+    mapped_actions = cached_mapped_actions[mode]
 
     for cattle_id, action_ids in mapped_actions.items():
         for action_id, intervals in action_ids.items():
             for interval in intervals:
-                df.loc[
-                    (df['DateTime'] >= interval[0]) & 
-                    (df['DateTime'] <= interval[1]), 
-                    ['cattle_id', 'action_id']
-                ] = [int(cattle_id), int(action_id)]
+                mask = (df['DateTime'] >= interval[0]) & (df['DateTime'] <= interval[1])
+                df.loc[mask, ['cattle_id', 'action_id']] = [int(cattle_id), int(action_id)]
 
     return df
 
-def sequence_df(df, mode):
-    """Sequence a dataframe using a JSON file"""
-    mapped_actions = get_mapped_actions("NONE")
-    sequenced_df = {}
+def segment_df(df, mode):
+    """Segment a dataframe using a JSON file"""
+
+    global cached_mapped_actions
+    global segments_info
+    if (not "NONE" in cached_mapped_actions): cached_mapped_actions["NONE"] = get_mapped_actions("NONE")
+    mapped_actions = cached_mapped_actions["NONE"]
+    segmented_df = {}
+
+    df['cattle_id'] = None
+    df['action_id'] = None
 
     for cattle_id, action_ids in mapped_actions.items():
         for action_id, intervals in action_ids.items():
             for i, interval in enumerate(intervals):
-                filtered_df = df[
-                    (df['DateTime'] >= interval[0]) & 
-                    (df['DateTime'] <= interval[1])
-                ].copy()
-                if not filtered_df.empty:
-                    key = f"{cattle_id}_{action_id}_{i}"
-                    sequenced_df[key] = filtered_df
+                mask = (df['DateTime'] >= interval[0]) & (df['DateTime'] <= interval[1])
+                df.loc[mask, ['cattle_id', 'action_id']] = [int(cattle_id), int(action_id)]
 
-    return sequenced_df
+                filtered_df = df[mask].copy()
+                if not filtered_df.empty:
+                    key = f"{action_id}_{cattle_id}_{i}"
+                    segmented_df[key] = filtered_df
+
+                    if (not action_id in segments_info): segments_info[action_id] = 0
+                    segments_info[action_id] += 1
+
+    return segmented_df
 
 def get_dump(df, mode):
     """Get the unlabeled rows and form a dataset with them"""
     RELEVANT_UNLABELED_SEQUENCE_LENGTH = 600
     empty_class_mask = df['cattle_id'].isna() & df['action_id'].isna()
     
-    sequence_indexes = []
-    sequence_index = []
+    segment_indexes = []
+    segment_index = []
     global stats
     
     for i, is_empty_class in enumerate(empty_class_mask):
         if is_empty_class:
-            sequence_index.append(i)
+            segment_index.append(i)
         else:
-            if len(sequence_index) >= RELEVANT_UNLABELED_SEQUENCE_LENGTH:
-                sequence_indexes.append(sequence_index)
-            sequence_index = []
-    if len(sequence_index) >= RELEVANT_UNLABELED_SEQUENCE_LENGTH: sequence_indexes.append(sequence_index) # Check the last sequence
+            if len(segment_index) >= RELEVANT_UNLABELED_SEQUENCE_LENGTH:
+                segment_indexes.append(segment_index)
+            segment_index = []
+    if len(segment_index) >= RELEVANT_UNLABELED_SEQUENCE_LENGTH: segment_indexes.append(segment_index) # Check the last segment
     
     dump_df = {}
-    for seq_num, sequence in enumerate(sequence_indexes):
-        seq_df = df.iloc[sequence]
-        file_name = f"{seq_num}_{len(sequence)}"
+    for seq_num, segment in enumerate(segment_indexes):
+        seq_df = df.iloc[segment]
+        file_name = f"{seq_num}_{len(segment)}"
         dump_df[file_name] = seq_df
-        stats["empty_class_row_count"] += len(sequence)
+        stats["empty_class_row_count"] += len(segment)
 
     return dump_df
 
-def augment_df(df, mode):
-    """Augment small sequences"""
-    AUGMENTATION_RATE = 30
+def augment_df(df, factor):
+    """Augment small segments"""
+    AUGMENTATION_RATE = min(factor, 30)
+    if (AUGMENTATION_RATE == 0): return None
 
     columns_to_exclude = ['DateTime']
     columns_to_process = [col for col in df.columns if col not in columns_to_exclude]
@@ -446,7 +395,7 @@ def augment_df(df, mode):
     augmentation = (
         AddNoise(scale=0.01)
         + TimeWarp(n_speed_change=3)  # Random time warping
-        # + Crop(size=100)  # Random cropping (adjust size to your sequence length)
+        # + Crop(size=100)  # Random cropping (adjust size to your segment length)
         + Quantize(n_levels=20)  # Quantization to simulate sensor precision
         + Drift(max_drift=0.1)  # Add drift to mimic sensor bias over time
         + Reverse(prob=0.3)  # Reverse segments with 30% probability
@@ -460,18 +409,14 @@ def augment_df(df, mode):
         augmented_chunks.append(augmented.T)
 
     augmented_data = np.vstack(augmented_chunks) # Shape: [n_timesteps*AUGMENTATION_RATE, 6]
-    augmented_df = pd.DataFrame(augmented_data)
+    augmented_df = pd.DataFrame(augmented_data, columns=["XA", "YA", "ZA", "XG", "YG", "ZG", "cattle_id", "action_id"])
 
     return augmented_df
 
-
-
-def plot_actions():
-        """Plot dataframes in nested directories"""
-        dfs_input_path = PARAMS_MAP["sequence"]["out_path"]
-        OUTPUT_FOLDER_PATH = "PLOT/"
-
-        def plot_action(df, file_name, outpout_folder_path):
+def plot_from_path(input_folder_path, output_folder_path, progress, task_progress):
+    """Plot both individual files and merged versions by action_id"""
+    
+    def plot_action(df, file_name, outpout_folder_path):
             """Plot single dataframe and saves it"""
             FIG_HEIGHT = 6
             FIG_WIDTH = 10
@@ -485,9 +430,9 @@ def plot_actions():
             plt.ylabel('Acceleration sur les 3 axes (m/s^2)')
             plt.title('')
             plt.grid(True)
-            os.makedirs(os.path.join(outpout_folder_path, 'Accelerometer'), exist_ok=True)
             plt.savefig(os.path.join(os.path.join(outpout_folder_path, 'Accelerometer'), f'{file_name}.png'), bbox_inches='tight')
             # plt.show()
+            plt.close()
 
             plt.figure(figsize=(FIG_WIDTH+0.01*len(df), FIG_HEIGHT), dpi=150)
             plt.plot(filtered_df.index/10, filtered_df['XG'], marker='o', linestyle='-', color='r')
@@ -497,46 +442,80 @@ def plot_actions():
             plt.ylabel('Vitesse angulaire sur les 3 axes (rad/s)')
             plt.title('')
             plt.grid(True)
-            os.makedirs(os.path.join(outpout_folder_path, 'Gyroscope'), exist_ok=True)
             plt.savefig(os.path.join(os.path.join(outpout_folder_path, 'Gyroscope'), f'{file_name}.png'), bbox_inches='tight')
             # plt.show()
-
-        for root, dirs, files in os.walk(dfs_input_path):
-            if root == dfs_input_path:
-                continue
-            csv_files = [f for f in files if f.lower().endswith('.csv')]
-
-            dfs = []
-            for csv_file in csv_files: dfs.append(pd.read_csv(os.path.join(root, csv_file)))
-            merged_df = pd.concat(dfs, ignore_index=True)
-            
-            file_name = os.path.basename(root)
-            root = os.path.join(root, OUTPUT_FOLDER_PATH)
-            output_path = os.path.join(root, f"{file_name}.csv")
-            merged_df.to_csv(output_path, index=False)
-            plot_action(merged_df, file_name, root)
-            print(f"Plotted {len(csv_files)} files in {root}")
-
-def print_action_stats(df):
-    """Prints info about dataframe and some processing stats"""
-    print('Stats:')
-    dataset_row_count = len(df)
-    print(f"Total dataset row count: {dataset_row_count}, ~( {str(timedelta(seconds=dataset_row_count/10)).split('.')[0]} )")
-    print(f'Filtered rows count: {stats["filtered_row_count"]}')
-    action_id_col_sorted = df['action_id'].value_counts().sort_index()
+            plt.close()
     
-    total_row_count = 0
-    for value, count in action_id_col_sorted.items():
-        print(f"{value} count: {count}, ~( {str(timedelta(seconds=count/10)).split('.')[0]} )")
-        total_row_count += count
-    print(f"Total classified row count: {total_row_count}, ~( {str(timedelta(seconds=total_row_count / 10)).split('.')[0]} )")
+    file_groups = defaultdict(list)
+    
+    for file_name in os.listdir(input_folder_path):
+        if file_name.endswith('.csv'):
+            if file_name.startswith('augment_'):
+                action_id = file_name.split('_')[1]
+            else:
+                action_id = file_name.split('_')[0]
+            file_groups[action_id].append((file_name, os.path.join(input_folder_path, file_name)))
+    
+    os.makedirs(output_folder_path, exist_ok=True)
+    step = 100 / len(file_groups)
+    for action_id, file_group in file_groups.items():
+        action_folder = os.path.join(output_folder_path, action_id)
+        os.makedirs(action_folder, exist_ok=True)
+        os.makedirs(os.path.join(action_folder, "Accelerometer"), exist_ok=True)
+        os.makedirs(os.path.join(action_folder, "Gyroscope"), exist_ok=True)
+        
+        all_dfs = []
+        for file_name, file_path in file_group:
+            df = pd.read_csv(file_path)
+            all_dfs.append(df)
+            base_name = os.path.splitext(file_name)[0]
+
+            plot_action(df, base_name, action_folder)
+        
+        if len(all_dfs) > 1:
+            merged_df = pd.concat(all_dfs, ignore_index=True)
+            
+            plot_action(merged_df, action_id, action_folder)
+        
+        print(f"Plotted action_id {action_id} ({len(file_group)} files)")
+        progress.update(task_progress, advance=step)
+
+def set_action_stats(df, type):
+    """Set action stats"""
+    global stats
+
+    df_row_count = len(df)    
+    action_id_col_sorted = df['action_id'].value_counts().sort_index()
+    if (type == 'original'):
+        stats["df_row_count"] = df_row_count
+        stats["original_class_row_count"] = action_id_col_sorted
+    else:
+        stats["augmented_class_row_count"] = action_id_col_sorted
+
+def print_stats():
+    """Prints info about dataframe and some processing stats"""
+    print('---Processed:')
+    print(f'Filtered rows count: {stats["filtered_row_count"]}')
     print(f"Total unclassified row count: {stats["empty_class_row_count"]}, ~( {str(timedelta(seconds=stats["empty_class_row_count"] / 10)).split('.')[0]} )")
+    print('---Stats:')
+    total_row_count = 0
+    for action_id, count in stats["original_class_row_count"].items():
+        print(f"Class {int(action_id)} original count: {count}, ~( {str(timedelta(seconds=count/10)).split('.')[0]} )")
+        total_row_count += count
+    if not (isinstance(stats["augmented_class_row_count"], int) and stats["augmented_class_row_count"] == 0):
+        for action_id, count in stats["augmented_class_row_count"].items():
+            print(f"Class {int(action_id)} augmented count: {count}, ~( {str(timedelta(seconds=count/10)).split('.')[0]} )")
+
+    print(f"Original dataset row count: {stats['df_row_count']}, ~( {str(timedelta(seconds=stats['df_row_count']/10)).split('.')[0]} )")
+    print(f"Total classified row count: {total_row_count}, ~( {str(timedelta(seconds=total_row_count / 10)).split('.')[0]} )")
+
 
 PARAMS_MAP = {
     "align": {
         "ask": "Align ?",
         "progress": "Aligning...",
-        "in_path": "",
+        "in_path_1": "Accelerometer/",
+        "in_path_2": "Gyroscope/",
         "out_path": "Results/Alligned/",
         "task": (align_and_format_dual_df)
     },
@@ -561,26 +540,33 @@ PARAMS_MAP = {
         "out_path": "Results/Dumpdf/",
         "task": (get_dump)
     },
-    "sequence": {
-        "ask": "Sequence ?",
-        "progress": "Sequencing...",
+    "segment": {
+        "ask": "Segment ?",
+        "progress": "Segmenting...",
         "in_path": "Results/Normalized/",
-        "out_path": "Results/Sequenced/",
-        "task": (sequence_df)
+        "out_path": "Results/Segmented/",
+        "task": (segment_df)
     },
-    "plot": {
-        "ask": "Plot actions ?",
+    "plot_original": {
+        "ask": "Plot actions on the original dataframe ?",
         "progress": "Plotting...",
-        "in_path": "Results/Sequenced/",
-        "out_path": "Results/Sequenced/",
-        "task": (plot_actions)
+        "in_path": "Results/Segmented/",
+        "out_path": "Results/Segmented/Plot",
+        "task": (plot_from_path)
     },
     "augment": {
         "ask": "Augment small classes ?",
         "progress": "Augmenting...",
-        "in_path": "Results/Sequenced/DIRECT/",
-        "out_path": "Results/Augmented/",
+        "in_path": "Results/Segmented/",
+        "out_path": "Results/Augmented",
         "task": (augment_df)
+    },
+    "plot_augmented": {
+        "ask": "Plot actions on the augmented dataframe ?",
+        "progress": "Plotting...",
+        "in_path": "Results/Final/",
+        "out_path": "Results/Final/Plot",
+        "task": (plot_from_path)
     }
 }
 
@@ -610,36 +596,73 @@ def process_params(obj):
                     if ("mode" in value["settings"]): mode = obj[key]["settings"]["mode"]
                     if ("merge" in value["settings"]): merge = obj[key]["settings"]["merge"]
 
-                if (key == 'plot'):
-                    plot_actions()
-                if (key == 'print_stats'):
-                    [(file_name, df)] = load_dfs_from_folder_path(os.path.join(PARAMS_MAP["classify"]["out_path"], "Merged"), None).items()
-                    print_action_stats(df)
+                if (key == 'plot_original'):
+                    with Progress() as progress:
+                        task_progress = progress.add_task(PARAMS_MAP[key]["progress"], total=100)
+                        plot_from_path(PARAMS_MAP["plot_original"]["in_path"], PARAMS_MAP["plot_original"]["out_path"], progress, task_progress)
+                elif (key == 'plot_augmented'):
+                    
+                    with Progress() as progress:
+                        task_progress = progress.add_task(PARAMS_MAP[key]["progress"], total=100)
+                        plot_from_path(PARAMS_MAP["plot_augmented"]["in_path"], PARAMS_MAP["plot_augmented"]["out_path"], progress, task_progress)
+                elif (key == 'print_stats'):
+                    [(orignial_file_name, original_df)] = load_dfs_from_folder_path(os.path.join(PARAMS_MAP["classify"]["out_path"], "Merged"), None).items()
+                    set_action_stats(original_df, "original")
+                    
+                    if (PARAMS["segment"]["augment"]["enable"] == 1):
+                        [(augmented_file_name, augmented_df)] = load_dfs_from_folder_path(os.path.join(PARAMS_MAP["augment"]["out_path"], "Merged"), None).items()
+                        set_action_stats(augmented_df, "augmented")
+
+                    print_stats()
+
                 elif (key == 'align'):
-                    acc_input_folder_path = "Accelerometer/"
-                    gyr_input_folder_path = "Gyroscope/"
+                    input_folder_path_1 = PARAMS_MAP[key]["in_path_1"]
+                    input_folder_path_2 = PARAMS_MAP[key]["in_path_2"]
                     output_folder_path = PARAMS_MAP[key]["out_path"]
 
                     # Read
-                    dual_dfs = load_dfs_from_folder_path(acc_input_folder_path, gyr_input_folder_path)
+                    dual_dfs = load_dfs_from_folder_path(input_folder_path_1, input_folder_path_2)
 
                     # Process & Write
                     with Progress() as progress:
                         task_progress = progress.add_task(PARAMS_MAP[key]["progress"], total=100)
-                        step = 100 / len(dual_dfs['acc'])
+                        step = 100 / len(dual_dfs['df1'])
 
                         func = PARAMS_MAP[key]["task"]
-                        for i, (file_name, acc_df) in enumerate(dual_dfs["acc"].items()):
-                            dual_df = {"acc": acc_df, "gyr": dual_dfs["gyr"][file_name]}
+                        for i, (df1_file_name, df1) in enumerate(dual_dfs["df1"].items()):
+                            if (df1_file_name in dual_dfs["df2"]):
+                                dual_df = {"df1": df1, "df2": dual_dfs["df2"][df1_file_name]}
+                            else:
+                                dual_df = {"df1": df1, "df2": None}
+
                             result_df = func(dual_df, mode, i)
                             
                             # Write
-                            save_dfs_to_folder_path(result_df, output_folder_path, file_name)
+                            save_dfs_to_folder_path(result_df, output_folder_path, df1_file_name)
                             progress.update(task_progress, advance=step)
                 else:
                     input_folder_path = PARAMS_MAP[key]["in_path"]
                     output_folder_path = PARAMS_MAP[key]["out_path"]
                     df_array = []
+
+                    if (key == "augment"):
+                        [(file_name, df)] = load_dfs_from_folder_path(os.path.join(PARAMS_MAP["classify"]["out_path"], "Merged"), None).items()
+                        action_id_col_sorted = df['action_id'].value_counts().sort_index()
+                        target_count = np.max(action_id_col_sorted)
+
+                        factors = {}
+                        for action_id, count in action_id_col_sorted.items():
+                            factors[int(action_id)] = round(target_count / count) - 1
+                        
+                        specific_factors = {}
+                        i = 0
+                        sorted_segments_info = {
+                            k: v for k, v in sorted(segments_info.items(), key=lambda item: item[0][0])
+                        }
+                        for action_id, segments_count in sorted_segments_info.items():
+                            for j in range(segments_count):
+                                specific_factors[i] = factors[int(action_id)]
+                                i += 1
 
                     # Read
                     dfs = load_dfs_from_folder_path(input_folder_path, None)
@@ -650,22 +673,42 @@ def process_params(obj):
                         step = 100 / len(dfs)
 
                         func = PARAMS_MAP[key]["task"]
-                        for file_name, df in dfs.items():
-                            result_df = func(df, mode)
+                        for i, (file_name, df) in enumerate(dfs.items()):
+                            if (key == "augment"):
+                                result_df = func(df, specific_factors[i])
+                                file_name = f"{key}_{file_name}"
+                            else:
+                                result_df = func(df, mode)
+                            if (result_df is None):
+                                progress.update(task_progress, advance=step)
+                                continue
                             df_array.append(result_df)
                             
                             # Write
-                            if (key == 'sequence' or key == 'get_dump'):
-                                write_tree(result_df, PARAMS_MAP[key]["out_path"], mode)
-                            else:                                
+                            if (key == 'segment' or key == 'get_dump'):
+                                write_tree(result_df, PARAMS_MAP[key]["out_path"])
+                            else:
                                 save_dfs_to_folder_path(result_df, output_folder_path, file_name)
                             progress.update(task_progress, advance=step)
 
-                        if (merge):
-                            merged_df = pd.concat(df_array, ignore_index=True)
-                            output_folder_path = os.path.join(output_folder_path, "Merged")
-                            os.makedirs(output_folder_path, exist_ok=True)
-                            save_dfs_to_folder_path(merged_df, output_folder_path, f"{key}_merged.csv")
+                    # Postprocessing
+                    if (key == 'augment'):
+                        original_df_path = PARAMS_MAP["segment"]["out_path"]
+                        augmented_df_path = PARAMS_MAP["augment"]["out_path"]
+                        final_output_folder_path = PARAMS_MAP["plot_augmented"]["in_path"]
+                        os.makedirs(final_output_folder_path, exist_ok=True)
+                        for file_name in os.listdir(original_df_path):
+                            if file_name.lower().endswith('.csv'):
+                                shutil.copy2(os.path.join(original_df_path, file_name), final_output_folder_path)
+                        for file_name in os.listdir(augmented_df_path):
+                            if file_name.lower().endswith('.csv'):
+                                shutil.copy2(os.path.join(augmented_df_path, file_name), final_output_folder_path)
+
+                    if (merge):
+                        merged_df = pd.concat(df_array, ignore_index=True)
+                        output_folder_path = os.path.join(output_folder_path, "Merged")
+                        os.makedirs(output_folder_path, exist_ok=True)
+                        save_dfs_to_folder_path(merged_df, output_folder_path, f"{key}_merged.csv")
                 process_params(value)
 
 process_params(PARAMS)
