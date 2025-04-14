@@ -27,7 +27,8 @@ from collections import defaultdict
 
 # Args
 parser = argparse.ArgumentParser()
-parser.add_argument('-all', action='store_true', help='Full processing')
+parser.add_argument('-train', action='store_true', help='Full processing')
+parser.add_argument('-plot', action='store_true', help='Plot accelerometer and gyroscope graphs')
 args = parser.parse_args()
 
 STARTING_TIMES = [
@@ -101,7 +102,7 @@ PARAMS = {
     }
 }
 
-if (args.all):
+if (args.train):
     PARAMS = {
         "align": {
             "enable": 1,
@@ -126,6 +127,58 @@ if (args.all):
             },
             "get_dump": {
                 "enable": 1,
+                "settings": {
+                    "merge": False
+                },
+            }
+        },
+        "segment": {
+            "enable": 1,
+            "settings": {
+                "merge": False
+            },
+            "plot_original": {
+                "enable": 0,
+            },
+            "augment": {
+                "enable": 1,
+                "settings": {
+                    "merge": True
+                },
+                "plot_original": {
+                    "enable": 0,
+                },
+            }
+        },
+        "print_stats": {
+            "enable": 1
+        }
+    }
+if (args.plot):
+    PARAMS = {
+        "align": {
+            "enable": 1,
+            "settings": {
+                "mode": "FILTER",
+                "modes": ['FILTER'],
+                "merge": True
+            },
+        },
+        "normalize": {
+            "enable": 1,
+            "settings": {
+                "merge": True
+            },
+        },
+        "classify": {
+            "enable": 0,
+            "settings": {
+                "mode": "NONE",
+                "modes": ['NONE'],
+                "merge": True
+            },
+            "get_dump": {
+                "enable": 0,
                 "settings": {
                     "merge": False
                 },
@@ -386,7 +439,7 @@ def augment_df(df, factor):
     AUGMENTATION_RATE = min(factor, 30)
     if (AUGMENTATION_RATE == 0): return None
 
-    columns_to_exclude = ['DateTime']
+    columns_to_exclude = ['DateTime', 'cattle_id', 'action_id']
     columns_to_process = [col for col in df.columns if col not in columns_to_exclude]
 
     original_data = df[columns_to_process].values  # Shape: [n_timesteps, 6]
@@ -405,13 +458,18 @@ def augment_df(df, factor):
 
     for _ in range(AUGMENTATION_RATE):
         # Apply different random augmentations each iteration
-        augmented = augmentation.augment(original_data)
-        augmented_chunks.append(augmented.T)
+        augmented = augmentation.augment(original_data).T
+        augmented_df = pd.DataFrame(augmented, columns=columns_to_process)
+        
+        features = df[columns_to_exclude].copy()
+        for col in columns_to_exclude:
+            augmented_df[col] = features[col].values
+        
+        # Reorder columns to match original DataFrame
+        augmented_df = augmented_df[df.columns]
+        augmented_chunks.append(augmented_df)
 
-    augmented_data = np.vstack(augmented_chunks) # Shape: [n_timesteps*AUGMENTATION_RATE, 6]
-    augmented_df = pd.DataFrame(augmented_data, columns=["XA", "YA", "ZA", "XG", "YG", "ZG", "cattle_id", "action_id"])
-
-    return augmented_df
+    return pd.concat(augmented_chunks, ignore_index=True)
 
 def plot_from_path(input_folder_path, output_folder_path, progress, task_progress):
     """Plot both individual files and merged versions by action_id"""
@@ -500,11 +558,11 @@ def print_stats():
     print('---Stats:')
     total_row_count = 0
     for action_id, count in stats["original_class_row_count"].items():
-        print(f"Class {int(action_id)} original count: {count}, ~( {str(timedelta(seconds=count/10)).split('.')[0]} )")
+        print(f"Class {action_id} original count: {count}, ~( {str(timedelta(seconds=count/10)).split('.')[0]} )")
         total_row_count += count
     if not (isinstance(stats["augmented_class_row_count"], int) and stats["augmented_class_row_count"] == 0):
         for action_id, count in stats["augmented_class_row_count"].items():
-            print(f"Class {int(action_id)} augmented count: {count}, ~( {str(timedelta(seconds=count/10)).split('.')[0]} )")
+            print(f"Class {action_id} augmented count: {count}, ~( {str(timedelta(seconds=count/10)).split('.')[0]} )")
 
     print(f"Original dataset row count: {stats['df_row_count']}, ~( {str(timedelta(seconds=stats['df_row_count']/10)).split('.')[0]} )")
     print(f"Total classified row count: {total_row_count}, ~( {str(timedelta(seconds=total_row_count / 10)).split('.')[0]} )")
@@ -646,6 +704,7 @@ def process_params(obj):
                     df_array = []
 
                     if (key == "augment"):
+                        # Get stats
                         [(file_name, df)] = load_dfs_from_folder_path(os.path.join(PARAMS_MAP["classify"]["out_path"], "Merged"), None).items()
                         action_id_col_sorted = df['action_id'].value_counts().sort_index()
                         target_count = np.max(action_id_col_sorted)
@@ -653,12 +712,10 @@ def process_params(obj):
                         factors = {}
                         for action_id, count in action_id_col_sorted.items():
                             factors[int(action_id)] = round(target_count / count) - 1
-                        
+                                                    
                         specific_factors = {}
                         i = 0
-                        sorted_segments_info = {
-                            k: v for k, v in sorted(segments_info.items(), key=lambda item: item[0][0])
-                        }
+                        sorted_segments_info = dict(sorted(segments_info.items()))
                         for action_id, segments_count in sorted_segments_info.items():
                             for j in range(segments_count):
                                 specific_factors[i] = factors[int(action_id)]
